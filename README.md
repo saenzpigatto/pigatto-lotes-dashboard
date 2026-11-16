@@ -5,12 +5,15 @@ o risco de cada um vencer sem ser vendido, publicado no GitHub Pages e
 atualizado automaticamente todo dia via GitHub Actions, puxando os dados
 direto da API do Omie.
 
-> **Dados sensíveis ficam de fora.** Como o painel é público, clientes com
-> contato (dados pessoais, LGPD), CMC e perda em R$ não são publicados. O
-> script já sabe gerá-los (`INCLUIR_DADOS_SENSIVEIS` em
-> `scripts/fetch_omie_data.py`), mas só podem voltar com aprovação formal da
-> diretoria; a página mostra essas seções automaticamente quando os dados
-> existem.
+> **Dados sensíveis só no painel privado.** Clientes com contato (LGPD),
+> vendedores, CMC e perda em R$ são gerados quando a variável
+> `INCLUIR_DADOS_SENSIVEIS` não está definida (caso do painel privado, protegido
+> pelo Cloudflare). O workflow deste repositório público define
+> `INCLUIR_DADOS_SENSIVEIS: "0"`, então nada disso sai daqui; a página esconde
+> essas seções quando os dados não existem.
+>
+> **Revalidações da Parker** vêm do CSV mantido pela rotina quinzenal no Drive
+> (`REVALIDACOES_CSV_URL`), com a tabela `REVALIDACOES` do script como reserva.
 >
 > **Complementar aos e-mails de alerta.** Os rascunhos quinzenais de e-mail
 > continuam sendo gerados pela tarefa agendada do Claude. A política comercial

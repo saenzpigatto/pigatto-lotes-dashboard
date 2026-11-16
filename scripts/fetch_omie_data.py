@@ -51,16 +51,22 @@ FAMILIAS_CONHECIDAS = [
 
 ORDEM_RISCO = ["Perda provável", "Risco parcial", "Sem giro", "Vende a tempo"]
 
-# O painel é público (sem senha). Clientes com contato (dados pessoais, LGPD),
-# CMC e perda em R$ só podem voltar a ser publicados com aprovação formal da
-# diretoria; até lá ficam de fora do data.json.
-INCLUIR_DADOS_SENSIVEIS = False
+# Clientes com contato (dados pessoais, LGPD), vendedores, CMC e perda em R$ só
+# saem no painel privado (protegido pelo Cloudflare). O workflow do repositório
+# público define INCLUIR_DADOS_SENSIVEIS=0; sem a variável, os dados são gerados.
+INCLUIR_DADOS_SENSIVEIS = os.environ.get("INCLUIR_DADOS_SENSIVEIS", "1").strip().lower() not in ("0", "false", "nao", "não")
 
 # Revalidações confirmadas pela Parker (certificado em PDF enviado pela
 # Qualidade): lote -> nova validade. O Omie continua com a validade antiga, então
-# sem esta tabela o lote some do painel como "vencido". Vale para o lote direto e,
-# nas bisnagas, para o lote de matéria-prima citado nas observações da OP.
-# Acrescente uma linha a cada certificado novo; linhas vencidas podem ficar.
+# sem elas o lote some do painel como "vencido". Vale para o lote direto e, nas
+# bisnagas, para o lote de matéria-prima citado nas observações da OP.
+# A fonte principal é o CSV que a rotina quinzenal mantém no Drive
+# (lote;nova_validade;produto;fonte); esta tabela é a reserva caso ele falhe.
+# Em revalidações sucessivas do mesmo lote vale a maior data.
+REVALIDACOES_CSV_URL = os.environ.get(
+    "REVALIDACOES_CSV_URL",
+    "https://drive.google.com/uc?export=download&id=1HBWR1LdpLNHMg7nb4kwsv1OGV2fWTobb",
+)
 REVALIDACOES = {
     "26010048": "13/11/2026",  # LORD ADESIVO 406 - KG, certificado de 23/09/2026
     "26010193": "18/11/2026",  # LORD ADESIVO 406 - KG, certificado de 23/09/2026
@@ -240,7 +246,12 @@ def calcular_cobertura(lotes: list, qtd_por_produto: dict) -> None:
             lote["risco"] = classificar_risco(saldo, lote["saldo_em_risco"], venda_dia <= 0)
 
 
-def buscar_vendas_12_meses(produtos_n_cod: set):
+def data_ultimo_alerta(hoje):
+    """O alerta quinzenal sai nos dias 1 e 15: devolve o mais recente até hoje."""
+    return hoje.replace(day=15) if hoje.day >= 15 else hoje.replace(day=1)
+
+
+def buscar_vendas_12_meses(produtos_n_cod: set, desde_alerta):
     """
     Soma, por produto, a quantidade vendida nos últimos 12 meses e o que cada
     cliente comprou (quantidade, última compra, vendedor do último pedido).
@@ -254,6 +265,8 @@ def buscar_vendas_12_meses(produtos_n_cod: set):
     qtd_por_produto: dict = {}
     # {n_cod_produto: {codigo_cliente: {"qtd", "ultima_compra" (date), "cod_vendedor"}}}
     clientes_por_produto: dict = {}
+    # Vendas desde o último alerta: {n_cod_produto: {"qtd", "pedidos" (set), "por_vendedor" {cod: qtd}}}
+    desde_alerta_por_produto: dict = {}
 
     pagina = 1
     while True:
@@ -288,6 +301,11 @@ def buscar_vendas_12_meses(produtos_n_cod: set):
                     continue
                 qtd = float(prod.get("quantidade", 0) or 0)
                 qtd_por_produto[n_cod] = qtd_por_produto.get(n_cod, 0) + qtd
+                if data_pedido and data_pedido >= desde_alerta:
+                    r = desde_alerta_por_produto.setdefault(n_cod, {"qtd": 0.0, "pedidos": set(), "por_vendedor": {}})
+                    r["qtd"] += qtd
+                    r["pedidos"].add(cabecalho.get("codigo_pedido") or cabecalho.get("numero_pedido"))
+                    r["por_vendedor"][cod_vendedor] = r["por_vendedor"].get(cod_vendedor, 0) + qtd
                 if cod_cliente is None:
                     continue
                 c = clientes_por_produto.setdefault(n_cod, {}).setdefault(
@@ -303,7 +321,7 @@ def buscar_vendas_12_meses(produtos_n_cod: set):
             break
         pagina += 1
 
-    return qtd_por_produto, clientes_por_produto
+    return qtd_por_produto, clientes_por_produto, desde_alerta_por_produto
 
 
 def buscar_cliente(cod_cliente) -> dict:
@@ -455,6 +473,28 @@ def enriquecer_com_op(lotes: list) -> None:
     print(f"OPs: {com_op} lote(s) de produção identificados, {sem_mp} sem lote de matéria-prima nas observações.")
 
 
+def carregar_revalidacoes() -> dict:
+    """Junta a tabela de reserva com o CSV do Drive, ficando com a maior data por lote."""
+    revalidacoes = {lote: parse_data_omie(d) for lote, d in REVALIDACOES.items()}
+    try:
+        resp = requests.get(REVALIDACOES_CSV_URL, timeout=TIMEOUT)
+        resp.raise_for_status()
+        linhas = resp.content.decode("utf-8-sig").splitlines()
+        if not linhas or not linhas[0].lower().startswith("lote;"):
+            raise ValueError(f"cabeçalho inesperado: {linhas[:1]}")
+        for linha in linhas[1:]:
+            partes = [p.strip() for p in linha.split(";")]
+            if len(partes) < 2 or not partes[0]:
+                continue
+            data = parse_data_omie(partes[1])
+            if data and (revalidacoes.get(partes[0]) is None or data > revalidacoes[partes[0]]):
+                revalidacoes[partes[0]] = data
+    except Exception as exc:  # noqa: BLE001 - sem o CSV, segue com a tabela de reserva
+        print(f"AVISO: não foi possível ler as revalidações do Drive ({exc}); usando a tabela do script.",
+              file=sys.stderr)
+    return {lote: d for lote, d in revalidacoes.items() if d}
+
+
 def aplicar_revalidacoes(lotes: list) -> None:
     """
     Troca a validade do Omie pela validade revalidada quando ela é posterior.
@@ -463,6 +503,7 @@ def aplicar_revalidacoes(lotes: list) -> None:
     revalidado, passa a ser a menor entre as validades atualizadas dos insumos.
     """
     hoje = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    revalidacoes = carregar_revalidacoes()
     revalidados = []
     for lote in lotes:
         original = parse_data_omie(lote["validade"])
@@ -470,13 +511,12 @@ def aplicar_revalidacoes(lotes: list) -> None:
             continue
         nova = None
         mp = lote.get("lotes_mp") or []
-        if not lote.get("op") and lote["lote"] in REVALIDACOES:
-            nova = parse_data_omie(REVALIDACOES[lote["lote"]])
-        elif mp and any(m["lote"] in REVALIDACOES for m in mp):
+        if not lote.get("op") and lote["lote"] in revalidacoes:
+            nova = revalidacoes[lote["lote"]]
+        elif mp and any(m["lote"] in revalidacoes for m in mp):
             vals = [parse_data_omie(m["validade"]) for m in mp]
             if all(vals) and original == min(vals):
-                novas = [parse_data_omie(REVALIDACOES.get(m["lote"], "")) or v for m, v in zip(mp, vals)]
-                nova = min(novas)
+                nova = min(revalidacoes.get(m["lote"], v) for m, v in zip(mp, vals))
         if nova and nova > original:
             lote["validade_original"] = lote["validade"]
             lote["validade"] = nova.strftime("%d/%m/%Y")
@@ -502,9 +542,11 @@ def montar_dashboard():
         lote["urgencia"] = bucket_urgencia(lote["dias_restantes"])
 
     produtos_n_cod = {l["n_cod_produto"] for l in lotes if l["n_cod_produto"] is not None}
+    desde_alerta = data_ultimo_alerta(datetime.now(ZoneInfo("America/Sao_Paulo")).date())
 
     try:
-        qtd_por_produto, clientes_por_produto = buscar_vendas_12_meses(produtos_n_cod)
+        qtd_por_produto, clientes_por_produto, desde_alerta_por_produto = buscar_vendas_12_meses(
+            produtos_n_cod, desde_alerta)
     except Exception as exc:  # noqa: BLE001
         print(f"ERRO: falha ao buscar vendas dos últimos 12 meses ({exc}). "
               f"Sem vendas a projeção de risco ficaria errada; data.json não foi atualizado.",
@@ -616,6 +658,33 @@ def montar_dashboard():
         key=lambda x: (ORDEM_RISCO.index(x["risco"]), x["dias_restantes"]),
     )
 
+    # Resultado das ofertas: o que saiu de cada produto em risco desde o último alerta.
+    vendedores_nomes = vendedores if INCLUIR_DADOS_SENSIVEIS else {}
+    resultado_ofertas = []
+    for n_cod in sorted(produtos_n_cod, key=str):
+        lotes_prod = [l for l in lotes if l["n_cod_produto"] == n_cod]
+        em_risco = round(sum(l["saldo_em_risco"] for l in lotes_prod), 2)
+        if em_risco <= 0:
+            continue
+        r = desde_alerta_por_produto.get(n_cod, {"qtd": 0.0, "pedidos": set(), "por_vendedor": {}})
+        item = {
+            "cod": str(n_cod),
+            "produto": lotes_prod[0]["produto"],
+            "unidade": lotes_prod[0]["unidade"],
+            "saldo_em_risco": em_risco,
+            "vendido_desde_alerta": round(r["qtd"], 2),
+            "pedidos_desde_alerta": len(r["pedidos"]),
+        }
+        if INCLUIR_DADOS_SENSIVEIS:
+            item["perda_estimada"] = round(sum(l.get("perda_estimada") or 0 for l in lotes_prod), 2)
+            item["por_vendedor"] = sorted(
+                ({"vendedor": vendedores_nomes.get(cod) or "(sem vendedor)", "qtd": round(q, 2)}
+                 for cod, q in r["por_vendedor"].items()),
+                key=lambda x: x["qtd"], reverse=True,
+            )
+        resultado_ofertas.append(item)
+    resultado_ofertas.sort(key=lambda x: (x["vendido_desde_alerta"] > 0, -x.get("perda_estimada", 0), -x["saldo_em_risco"]))
+
     return {
         "gerado_em": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "janela_dias": JANELA_DIAS,
@@ -624,6 +693,8 @@ def montar_dashboard():
         "por_urgencia": por_urgencia,
         "por_risco": por_risco,
         "produtos": produtos,
+        "ultimo_alerta": desde_alerta.strftime("%d/%m/%Y"),
+        "resultado_ofertas": resultado_ofertas,
         "lotes": detalhe_lotes,
     }
 
