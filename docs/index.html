@@ -105,7 +105,7 @@
   td { padding: 10px 7px; border-bottom: 1px solid var(--line); vertical-align: middle; }
   tbody tr:nth-child(even) td { background: #FAFCFE; }
   .num, th.num { text-align: right; white-space: nowrap; }
-  td.produto { min-width: 160px; font-weight: 500; }
+  td.produto { min-width: 150px; font-weight: 500; }
   tr.clicavel { cursor: pointer; }
   tr.clicavel:hover td { background: var(--row-hover); }
   tr.selecionado td { background: var(--row-hover) !important; box-shadow: inset 0 0 0 0 transparent; }
@@ -168,6 +168,7 @@
     <nav class="nav">
       <a href="#resumo">Resumo</a>
       <a href="#familias">Risco por família</a>
+      <a href="#ofertas">Resultado das ofertas</a>
       <a href="#clientes" class="so-clientes">Clientes por produto</a>
       <a href="#lotes">Lotes</a>
     </nav>
@@ -208,6 +209,27 @@
             </tr>
           </thead>
           <tbody id="tabelaFamiliasBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" id="ofertas">
+      <h2>Resultado das ofertas</h2>
+      <p class="sub" id="ofertasSub">Quanto saiu de cada produto em risco desde o último alerta quinzenal (pedidos faturados).</p>
+      <div class="tabela">
+        <table>
+          <thead>
+            <tr>
+              <th>Produto</th>
+              <th class="num">Saldo em risco</th>
+              <th class="num so-valores">Perda estimada</th>
+              <th class="num">Vendido desde o alerta</th>
+              <th class="num">% do saldo em risco</th>
+              <th class="num">Pedidos</th>
+              <th class="so-clientes">Por vendedor</th>
+            </tr>
+          </thead>
+          <tbody id="tabelaOfertasBody"></tbody>
         </table>
       </div>
     </section>
@@ -498,6 +520,37 @@ document.getElementById("tabelaLotesBody").addEventListener("click", ev => {
   if (tr) selecionarProduto(tr.dataset.cod, true);
 });
 
+function montarOfertas(dados) {
+  const linhas = dados.resultado_ofertas || [];
+  document.getElementById("ofertasSub").textContent =
+    `Quanto saiu de cada produto em risco desde o último alerta quinzenal${dados.ultimo_alerta ? ` (${dados.ultimo_alerta})` : ""}, em pedidos faturados. Produtos sem nenhuma venda aparecem primeiro.`;
+  const corpo = document.getElementById("tabelaOfertasBody");
+  if (!linhas.length) {
+    corpo.innerHTML = `<tr><td colspan="7" class="vazio">Nenhum produto com saldo em risco.</td></tr>`;
+    return;
+  }
+  corpo.innerHTML = linhas.map(o => {
+    const pct = o.saldo_em_risco ? Math.min(100, (o.vendido_desde_alerta / o.saldo_em_risco) * 100) : 0;
+    const cls = o.vendido_desde_alerta <= 0 ? "dias-urg" : pct < 50 ? "dias-med" : "";
+    const vend = (o.por_vendedor || []).map(v => `${esc(v.vendedor)}: ${formatarNumero(v.qtd)}`).join("<br>");
+    return `
+    <tr class="clicavel" data-cod="${esc(o.cod)}">
+      <td class="produto">${esc(o.produto)}</td>
+      <td class="num">${formatarNumero(o.saldo_em_risco)} ${esc(o.unidade)}</td>
+      <td class="num so-valores">${o.perda_estimada !== undefined ? formatarReais(o.perda_estimada) : "—"}</td>
+      <td class="num ${cls}">${formatarNumero(o.vendido_desde_alerta)} ${esc(o.unidade)}</td>
+      <td class="num ${cls}">${formatarNumero(Math.round(pct))}%</td>
+      <td class="num">${o.pedidos_desde_alerta}</td>
+      <td class="so-clientes" style="font-size:12px">${vend || "—"}</td>
+    </tr>`;
+  }).join("");
+}
+
+document.getElementById("tabelaOfertasBody").addEventListener("click", ev => {
+  const tr = ev.target.closest("tr[data-cod]");
+  if (tr && (dadosGlobais.produtos || {})[tr.dataset.cod]) selecionarProduto(tr.dataset.cod, true);
+});
+
 function exibir(dados) {
   dadosGlobais = dados;
   const k = dados.kpis || {};
@@ -510,6 +563,7 @@ function exibir(dados) {
   montarFamilias(dados.lotes || []);
   montarFiltros(dados.lotes || []);
   montarSeletorProdutos(dados);
+  montarOfertas(dados);
   renderTabela();
   if (produtoSelecionado) selecionarProduto(produtoSelecionado, false);
 }
