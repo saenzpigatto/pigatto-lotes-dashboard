@@ -5,12 +5,20 @@ o risco de cada um vencer sem ser vendido, publicado no GitHub Pages e
 atualizado automaticamente todo dia via GitHub Actions, puxando os dados
 direto da API do Omie.
 
-> **Dados sensíveis só no painel privado.** Clientes com contato (LGPD),
-> vendedores, CMC e perda em R$ são gerados quando a variável
-> `INCLUIR_DADOS_SENSIVEIS` não está definida (caso do painel privado, protegido
-> pelo Cloudflare). O workflow deste repositório público define
-> `INCLUIR_DADOS_SENSIVEIS: "0"`, então nada disso sai daqui; a página esconde
-> essas seções quando os dados não existem.
+> **Potenciais clientes: só o nome.** Para cada produto, o painel mostra o nome
+> do cliente (razão social e nome fantasia), a quantidade comprada em 12 meses e
+> a última compra. Contato, telefone, e-mail e cidade **nunca** são gerados.
+> Os nomes saem por padrão (painel interno publicado por `Grupo-Pigatto/painelpigatto`);
+> o workflow deste repositório público define `INCLUIR_NOMES_CLIENTES: "0"`.
+>
+> **Dados sensíveis desligados por padrão no painel interno.** Vendedores, CMC e
+> perda em R$ só são gerados com `INCLUIR_DADOS_SENSIVEIS` ligado, o que depende
+> de aprovação da diretoria. O workflow público define `INCLUIR_DADOS_SENSIVEIS: "0"`;
+> a página esconde essas colunas quando os dados não existem.
+>
+> **Publicação do painel interno:** um robô do GitHub em `Grupo-Pigatto/painelpigatto`
+> só usa versões deste repositório revisadas e aprovadas pela responsável. Cada
+> mudança aqui só entra no painel depois dessa aprovação.
 >
 > **Revalidações da Parker** vêm do CSV mantido pela rotina quinzenal no Drive
 > (`REVALIDACOES_CSV_URL`), com a tabela `REVALIDACOES` do script como reserva.

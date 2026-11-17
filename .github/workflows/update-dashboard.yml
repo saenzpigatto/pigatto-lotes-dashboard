@@ -31,6 +31,7 @@ jobs:
           OMIE_APP_SECRET: ${{ secrets.OMIE_APP_SECRET }}
           # Repositório público: clientes, vendedores, CMC e perda em R$ nunca saem daqui.
           INCLUIR_DADOS_SENSIVEIS: "0"
+          INCLUIR_NOMES_CLIENTES: "0"
         run: python scripts/fetch_omie_data.py
 
       - name: Publicar dados atualizados (commit automático)

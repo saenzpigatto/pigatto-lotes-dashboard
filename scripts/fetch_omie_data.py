@@ -56,6 +56,13 @@ ORDEM_RISCO = ["Perda provável", "Risco parcial", "Sem giro", "Vende a tempo"]
 # público define INCLUIR_DADOS_SENSIVEIS=0; sem a variável, os dados são gerados.
 INCLUIR_DADOS_SENSIVEIS = os.environ.get("INCLUIR_DADOS_SENSIVEIS", "1").strip().lower() not in ("0", "false", "nao", "não")
 
+# Potenciais clientes por produto: só o NOME do cliente (razão social / nome
+# fantasia), a quantidade comprada em 12 meses e a data da última compra.
+# Contato, telefone, e-mail e cidade nunca são gerados (decisão de 17/11/2026).
+# Sai por padrão no painel interno; o workflow do repositório público define
+# INCLUIR_NOMES_CLIENTES=0.
+INCLUIR_NOMES_CLIENTES = os.environ.get("INCLUIR_NOMES_CLIENTES", "1").strip().lower() not in ("0", "false", "nao", "não")
+
 # Revalidações confirmadas pela Parker (certificado em PDF enviado pela
 # Qualidade): lote -> nova validade. O Omie continua com a validade antiga, então
 # sem elas o lote some do painel como "vencido". Vale para o lote direto e, nas
@@ -325,22 +332,14 @@ def buscar_vendas_12_meses(produtos_n_cod: set, desde_alerta):
 
 
 def buscar_cliente(cod_cliente) -> dict:
-    """Dados cadastrais do cliente para o comercial (painel protegido por senha)."""
+    """Só o nome do cliente: nenhum contato, telefone, e-mail ou endereço sai daqui."""
     try:
         c = omie_call("geral/clientes", "ConsultarCliente", {"codigo_cliente_omie": cod_cliente})
     except Exception:  # noqa: BLE001 - um cadastro com problema não derruba a execução
-        return {"razao_social": f"Cliente {cod_cliente}"}
-    ddd = (c.get("telefone1_ddd") or "").strip()
-    fone = (c.get("telefone1_numero") or "").strip()
-    cidade = (c.get("cidade") or "").strip()
-    uf = (c.get("estado") or "").strip()
+        return {"razao_social": f"Cliente {cod_cliente}", "nome_fantasia": ""}
     return {
         "razao_social": (c.get("razao_social") or c.get("nome_fantasia") or f"Cliente {cod_cliente}").strip(),
         "nome_fantasia": (c.get("nome_fantasia") or "").strip(),
-        "cidade": f"{cidade}/{uf}" if cidade and uf else cidade or uf,
-        "contato": (c.get("contato") or "").strip(),
-        "telefone": f"({ddd}) {fone}" if ddd and fone else fone,
-        "email": (c.get("email") or "").strip(),
     }
 
 
@@ -575,6 +574,13 @@ def montar_dashboard():
         except Exception as exc:  # noqa: BLE001
             print(f"AVISO: falha ao buscar vendedores ({exc}).", file=sys.stderr)
             vendedores = {}
+    else:
+        vendedores = {}
+        for lote in lotes:
+            lote["cmc"] = None
+            lote["perda_estimada"] = None
+
+    if INCLUIR_NOMES_CLIENTES:
         cache_clientes: dict = {}
         for lote in lotes:
             n_cod = lote["n_cod_produto"]
@@ -584,17 +590,19 @@ def montar_dashboard():
             for cod_cliente, c in clientes_por_produto.get(n_cod, {}).items():
                 if cod_cliente not in cache_clientes:
                     cache_clientes[cod_cliente] = buscar_cliente(cod_cliente)
-                clientes.append({
+                cliente = {
                     **cache_clientes[cod_cliente],
                     "qtd_12m": round(c["qtd"], 2),
                     "ultima_compra": c["ultima_compra"].strftime("%d/%m/%Y") if c["ultima_compra"] else "",
-                    "vendedor": vendedores.get(c["cod_vendedor"], ""),
-                })
+                }
+                if INCLUIR_DADOS_SENSIVEIS:
+                    cliente["vendedor"] = vendedores.get(c["cod_vendedor"], "")
+                clientes.append(cliente)
             clientes.sort(key=lambda x: x["qtd_12m"], reverse=True)
             produtos[str(n_cod)] = {
                 "produto": lote["produto"],
                 "unidade": lote["unidade"],
-                "cmc": lote["cmc"],
+                **({"cmc": lote["cmc"]} if INCLUIR_DADOS_SENSIVEIS else {}),
                 "clientes": clientes,
             }
 
@@ -659,7 +667,7 @@ def montar_dashboard():
     )
 
     # Resultado das ofertas: o que saiu de cada produto em risco desde o último alerta.
-    vendedores_nomes = vendedores if INCLUIR_DADOS_SENSIVEIS else {}
+    vendedores_nomes = vendedores
     resultado_ofertas = []
     for n_cod in sorted(produtos_n_cod, key=str):
         lotes_prod = [l for l in lotes if l["n_cod_produto"] == n_cod]
