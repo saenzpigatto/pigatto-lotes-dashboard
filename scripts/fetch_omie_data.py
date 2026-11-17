@@ -501,6 +501,29 @@ def carregar_revalidacoes() -> dict:
     return {lote: d for lote, d in revalidacoes.items() if d}
 
 
+# Barreira no código (além da instrução da rotina): e-mails e telefones nunca
+# chegam ao painel, mesmo que alguém os escreva na resposta.
+RE_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+RE_TELEFONE = re.compile(r"(?:\+?55[\s.-]*)?(?:\(?\d{2}\)?[\s.-]*)?9?\d{4}[\s.-]?\d{4}(?!\d)")
+RE_FONE_ROTULADO = re.compile(
+    r"((?:tel(?:efone)?|fone|cel(?:ular)?|whats(?:app)?|zap|contato|ligar(?: para)?)[\s:.-]*)\d{8,13}", re.IGNORECASE)
+RE_DATA = re.compile(r"\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b")
+
+
+def limpar_contatos(texto: str) -> str:
+    """Troca e-mails e telefones por "[contato removido]" (datas e números de lote ficam)."""
+    texto = RE_EMAIL.sub("[contato removido]", texto or "")
+    datas = RE_DATA.findall(texto)
+    marcado = RE_DATA.sub("\x00", texto)
+    marcado = RE_TELEFONE.sub(
+        lambda m: m.group(0) if re.fullmatch(r"\d{7,12}", m.group(0)) else "[contato removido]", marcado)
+    for d in datas:
+        marcado = marcado.replace("\x00", d, 1)
+    # Número solto só é tratado como telefone quando vem depois de palavra de contato
+    # (sem isso, números de lote como 2272510281 seriam apagados).
+    return RE_FONE_ROTULADO.sub(lambda m: m.group(1) + "[contato removido]", marcado)
+
+
 def carregar_linhas_acao() -> dict:
     """
     CSV "lote;cod_produto;linha_de_acao;prazo;status;atualizado_em" -> dict com
@@ -519,7 +542,7 @@ def carregar_linhas_acao() -> dict:
             if not partes[0] or not partes[2]:
                 continue
             linhas_acao[(partes[0], partes[1])] = {
-                "linha_acao": partes[2][:300],
+                "linha_acao": limpar_contatos(partes[2])[:300],
                 "prazo": partes[3] if parse_data_omie(partes[3]) else "",
                 "status": partes[4][:40],
                 "atualizado_em": partes[5][:10],
