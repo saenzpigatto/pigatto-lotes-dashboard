@@ -226,7 +226,7 @@
               <th class="num">Vendido desde o alerta</th>
               <th class="num">% do saldo em risco</th>
               <th class="num">Pedidos</th>
-              <th class="so-clientes">Por vendedor</th>
+              <th class="so-valores">Por vendedor</th>
             </tr>
           </thead>
           <tbody id="tabelaOfertasBody"></tbody>
@@ -244,13 +244,9 @@
           <thead>
             <tr>
               <th>Cliente</th>
-              <th>Cidade</th>
               <th class="num">Qtd. 12 meses</th>
               <th>Última compra</th>
-              <th>Vendedor</th>
-              <th>Contato</th>
-              <th>Telefone</th>
-              <th>E-mail</th>
+              <th class="so-valores">Vendedor</th>
             </tr>
           </thead>
           <tbody id="tabelaClientesBody"></tbody>
@@ -416,13 +412,9 @@ function selecionarProduto(cod, rolar) {
     document.getElementById("tabelaClientesBody").innerHTML = p.clientes.map(c => `
       <tr>
         <td>${esc(c.razao_social)}${c.nome_fantasia && c.nome_fantasia !== c.razao_social ? `<br><span style="color:var(--muted);font-size:12px">${esc(c.nome_fantasia)}</span>` : ""}</td>
-        <td>${esc(c.cidade)}</td>
         <td class="num">${formatarNumero(c.qtd_12m)} ${esc(p.unidade)}</td>
         <td>${esc(c.ultima_compra)}</td>
-        <td>${esc(c.vendedor)}</td>
-        <td>${esc(c.contato)}</td>
-        <td style="white-space:nowrap">${esc(c.telefone)}</td>
-        <td>${c.email ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : ""}</td>
+        <td class="so-valores">${esc(c.vendedor || "")}</td>
       </tr>`).join("");
     bloco.hidden = p.clientes.length === 0;
   }
@@ -541,7 +533,7 @@ function montarOfertas(dados) {
       <td class="num ${cls}">${formatarNumero(o.vendido_desde_alerta)} ${esc(o.unidade)}</td>
       <td class="num ${cls}">${formatarNumero(Math.round(pct))}%</td>
       <td class="num">${o.pedidos_desde_alerta}</td>
-      <td class="so-clientes" style="font-size:12px">${vend || "—"}</td>
+      <td class="so-valores" style="font-size:12px">${vend || "—"}</td>
     </tr>`;
   }).join("");
 }
