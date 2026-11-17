@@ -20,6 +20,13 @@ direto da API do Omie.
 > só usa versões deste repositório revisadas e aprovadas pela responsável. Cada
 > mudança aqui só entra no painel depois dessa aprovação.
 >
+> **Linha de ação por lote.** Os responsáveis (Adesivos Estruturais e Linha TT;
+> demais famílias) respondem o e-mail de alerta com a estratégia, o prazo e o
+> status de cada lote. A rotina diária lê as respostas e grava o CSV do Drive
+> `LINHAS_ACAO_CSV_URL` (lote, código do produto, linha de ação, prazo, status,
+> data — sem nomes de pessoas). O painel mostra a coluna "Linha de ação" e
+> destaca lotes sem plano ou com prazo vencido.
+>
 > **Revalidações da Parker** vêm do CSV mantido pela rotina quinzenal no Drive
 > (`REVALIDACOES_CSV_URL`), com a tabela `REVALIDACOES` do script como reserva.
 >

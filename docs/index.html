@@ -73,6 +73,12 @@
   }
   .alerta b { font-weight: 700; }
   .alerta[hidden] { display: none; }
+  .acao { font-size: 12px; line-height: 1.4; min-width: 180px; }
+  .acao .prazo { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .acao-tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+  .acao-sem { background: #FDECEC; color: #B42318; }
+  .acao-venc { background: #FEF0DC; color: #A35B00; }
+  .acao-ok { background: #E6F4EA; color: #0A7D33; }
   body.sem-valores .so-valores, body.sem-clientes .so-clientes { display: none !important; }
 
   /* ---------- KPIs ---------- */
@@ -266,6 +272,14 @@
           <option value="31–60 dias">31–60 dias</option>
           <option value="61–90 dias">61–90 dias</option>
         </select>
+        <select id="filtroAcao">
+          <option value="">Toda linha de ação</option>
+          <option value="Sem plano">Sem plano</option>
+          <option value="Prazo vencido">Prazo vencido</option>
+          <option value="Em andamento">Em andamento</option>
+          <option value="Vendido">Vendido</option>
+          <option value="Sem saída">Sem saída</option>
+        </select>
         <select id="filtroRisco">
           <option value="">Todos os riscos</option>
           <option value="Perda provável">Perda provável</option>
@@ -286,6 +300,7 @@
               <th data-key="dias_para_vender" class="num col-dv">Dias p/ vender</th>
               <th data-key="saldo_em_risco" class="num">Saldo em risco</th>
               <th data-key="risco">Risco</th>
+              <th data-key="situacao_acao">Linha de ação</th>
               <th data-key="cmc" class="num col-cmc so-valores">CMC unit.</th>
               <th data-key="perda_estimada" class="num so-valores">Perda estimada</th>
             </tr>
@@ -342,7 +357,11 @@ function montarKpis(k) {
   const alerta = document.getElementById("alerta");
   if (k.lotes_perda_provavel) {
     alerta.innerHTML = `<b>${plural(k.lotes_perda_provavel, "lote com perda provável", "lotes com perda provável")}</b> e ${plural(k.lotes_risco_parcial ?? 0, "lote", "lotes")} com risco parcial. ` +
-      (temValores ? `Perda estimada se nada for feito: <b>${formatarReais(k.perda_estimada_total ?? 0)}</b>.` : "Priorize esses lotes nas ofertas.");
+      (temValores ? `Perda estimada se nada for feito: <b>${formatarReais(k.perda_estimada_total ?? 0)}</b>.` : "Priorize esses lotes nas ofertas.") +
+      (k.lotes_sem_plano || k.lotes_prazo_vencido
+        ? ` <b>Linha de ação:</b> ${plural(k.lotes_sem_plano ?? 0, "lote sem plano", "lotes sem plano")}` +
+          (k.lotes_prazo_vencido ? ` e ${plural(k.lotes_prazo_vencido, "com prazo vencido", "com prazo vencido")}` : "") + "."
+        : "");
     alerta.hidden = false;
   } else {
     alerta.hidden = true;
@@ -438,10 +457,12 @@ function linhasFiltradas() {
   const familia = document.getElementById("filtroFamilia").value;
   const situacao = document.getElementById("filtroSituacao").value;
   const risco = document.getElementById("filtroRisco").value;
+  const acao = document.getElementById("filtroAcao").value;
   const linhas = dadosGlobais.lotes.filter(l =>
     (!familia || l.familia === familia) &&
     (!situacao || l.situacao === situacao) &&
     (!risco || l.risco === risco) &&
+    (!acao || l.situacao_acao === acao) &&
     (!termo || `${l.produto} ${l.lote} ${(l.lotes_mp || []).map(m => m.lote).join(" ")}`.toLowerCase().includes(termo)));
   linhas.sort((a, b) => {
     const va = valorOrdenacao(a, ordenacao.chave), vb = valorOrdenacao(b, ordenacao.chave);
@@ -460,11 +481,23 @@ function celulaLote(l) {
   return `<span class="op">OP nº ${esc(l.op)}</span>${linhas}`;
 }
 
+function celulaAcao(l) {
+  const sit = l.situacao_acao;
+  if (!sit) return "—";
+  if (sit === "Sem plano") return `<span class="acao-tag acao-sem">Sem plano</span>`;
+  const tag = sit === "Prazo vencido" ? `<span class="acao-tag acao-venc">Prazo vencido</span><br>`
+    : sit === "Vendido" ? `<span class="acao-tag acao-ok">Vendido</span><br>`
+    : sit === "Sem saída" ? `<span class="acao-tag acao-sem">Sem saída</span><br>` : "";
+  const detalhes = [l.prazo_acao ? `prazo ${esc(l.prazo_acao)}` : "", l.acao_atualizada_em ? `atualizado em ${esc(l.acao_atualizada_em)}` : ""]
+    .filter(Boolean).join(" · ");
+  return `${tag}${esc(l.linha_acao)}${detalhes ? `<span class="prazo">${detalhes}</span>` : ""}`;
+}
+
 function renderTabela() {
   const linhas = linhasFiltradas();
   const corpo = document.getElementById("tabelaLotesBody");
   if (!linhas.length) {
-    corpo.innerHTML = `<tr><td colspan="10" class="vazio">Nenhum lote com esses filtros.</td></tr>`;
+    corpo.innerHTML = `<tr><td colspan="11" class="vazio">Nenhum lote com esses filtros.</td></tr>`;
     return;
   }
   corpo.innerHTML = linhas.map(l => {
@@ -479,6 +512,7 @@ function renderTabela() {
       <td class="num col-dv">${l.dias_para_vender ?? "—"}</td>
       <td class="num">${formatarNumero(l.saldo_em_risco ?? 0)} ${esc(l.unidade)}</td>
       <td>${l.risco ? `<span class="risco ${CLASSE_RISCO[l.risco] || ""}">${esc(l.risco)}</span>` : "—"}</td>
+      <td class="acao">${celulaAcao(l)}</td>
       <td class="num col-cmc so-valores">${l.cmc ? formatarReais(l.cmc) : "—"}</td>
       <td class="num so-valores">${l.perda_estimada === null || l.perda_estimada === undefined ? "—" : formatarReais(l.perda_estimada)}</td>
     </tr>`;
@@ -504,7 +538,7 @@ document.querySelectorAll("#tabelaLotes th[data-key]").forEach(th => {
     renderTabela();
   });
 });
-["filtroProduto", "filtroFamilia", "filtroSituacao", "filtroRisco"].forEach(id => {
+["filtroProduto", "filtroFamilia", "filtroSituacao", "filtroAcao", "filtroRisco"].forEach(id => {
   document.getElementById(id).addEventListener("input", renderTabela);
 });
 document.getElementById("tabelaLotesBody").addEventListener("click", ev => {

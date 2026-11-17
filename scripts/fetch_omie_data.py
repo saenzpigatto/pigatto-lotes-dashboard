@@ -74,6 +74,13 @@ REVALIDACOES_CSV_URL = os.environ.get(
     "REVALIDACOES_CSV_URL",
     "https://drive.google.com/uc?export=download&id=1HBWR1LdpLNHMg7nb4kwsv1OGV2fWTobb",
 )
+# Linha de ação de cada lote (estratégia, prazo e status), respondida por e-mail
+# pelos responsáveis e gravada neste CSV do Drive pela rotina diária. Sem nomes
+# de pessoas: só lote, código do produto, linha de ação, prazo, status e data.
+LINHAS_ACAO_CSV_URL = os.environ.get(
+    "LINHAS_ACAO_CSV_URL",
+    "https://drive.google.com/uc?export=download&id=1QJQ5WSwWc-lCj5atkpZw5G5vY_grM7fh",
+)
 REVALIDACOES = {
     "26010048": "13/11/2026",  # LORD ADESIVO 406 - KG, certificado de 23/09/2026
     "26010193": "18/11/2026",  # LORD ADESIVO 406 - KG, certificado de 23/09/2026
@@ -494,6 +501,49 @@ def carregar_revalidacoes() -> dict:
     return {lote: d for lote, d in revalidacoes.items() if d}
 
 
+def carregar_linhas_acao() -> dict:
+    """
+    CSV "lote;cod_produto;linha_de_acao;prazo;status;atualizado_em" -> dict com
+    chave (lote, cod_produto) e também (lote, "") para linhas sem código.
+    Se houver mais de uma linha para a mesma chave, vale a última do arquivo.
+    """
+    linhas_acao: dict = {}
+    try:
+        resp = requests.get(LINHAS_ACAO_CSV_URL, timeout=TIMEOUT)
+        resp.raise_for_status()
+        linhas = resp.content.decode("utf-8-sig").splitlines()
+        if not linhas or not linhas[0].lower().startswith("lote;"):
+            raise ValueError(f"cabeçalho inesperado: {linhas[:1]}")
+        for linha in linhas[1:]:
+            partes = [p.strip() for p in linha.split(";")] + [""] * 6
+            if not partes[0] or not partes[2]:
+                continue
+            linhas_acao[(partes[0], partes[1])] = {
+                "linha_acao": partes[2][:300],
+                "prazo": partes[3] if parse_data_omie(partes[3]) else "",
+                "status": partes[4][:40],
+                "atualizado_em": partes[5][:10],
+            }
+    except Exception as exc:  # noqa: BLE001 - sem o CSV, o painel sai sem a coluna preenchida
+        print(f"AVISO: não foi possível ler as linhas de ação do Drive ({exc}).", file=sys.stderr)
+    return linhas_acao
+
+
+def situacao_acao(acao, hoje) -> str:
+    """Sem plano / Prazo vencido / Vendido / Sem saída / Em andamento."""
+    if not acao:
+        return "Sem plano"
+    status = (acao.get("status") or "").lower()
+    if status.startswith("vendido"):
+        return "Vendido"
+    if status.startswith("sem sa"):
+        return "Sem saída"
+    prazo = parse_data_omie(acao.get("prazo"))
+    if prazo and prazo < hoje:
+        return "Prazo vencido"
+    return "Em andamento"
+
+
 def aplicar_revalidacoes(lotes: list) -> None:
     """
     Troca a validade do Omie pela validade revalidada quando ela é posterior.
@@ -637,6 +687,17 @@ def montar_dashboard():
 
     por_risco = [{"risco": r, "qtd_lotes": contagem_risco[r]} for r in ORDEM_RISCO]
 
+    # Linha de ação respondida por e-mail pelos responsáveis
+    hoje_sp = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    linhas_acao = carregar_linhas_acao()
+    for l in lotes:
+        acao = (linhas_acao.get((str(l["lote"]), str(l["codigo_produto"] or "")))
+                or linhas_acao.get((str(l["lote"]), "")))
+        l["acao"] = acao
+        l["situacao_acao"] = situacao_acao(acao, hoje_sp)
+    kpis["lotes_sem_plano"] = len([l for l in lotes if l["situacao_acao"] == "Sem plano"])
+    kpis["lotes_prazo_vencido"] = len([l for l in lotes if l["situacao_acao"] == "Prazo vencido"])
+
     # Detalhe de lotes (produto/lote/datas — sem nenhum dado de cliente)
     detalhe_lotes = sorted(
         (
@@ -659,6 +720,11 @@ def montar_dashboard():
                 "dias_para_vender": l["dias_para_vender"],
                 "saldo_em_risco": l["saldo_em_risco"],
                 "risco": l["risco"],
+                "linha_acao": (l["acao"] or {}).get("linha_acao", ""),
+                "prazo_acao": (l["acao"] or {}).get("prazo", ""),
+                "status_acao": (l["acao"] or {}).get("status", ""),
+                "acao_atualizada_em": (l["acao"] or {}).get("atualizado_em", ""),
+                "situacao_acao": l["situacao_acao"],
                 **({"cmc": l["cmc"], "perda_estimada": l["perda_estimada"]} if INCLUIR_DADOS_SENSIVEIS else {}),
             }
             for l in lotes
