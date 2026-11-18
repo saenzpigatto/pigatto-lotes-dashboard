@@ -23,7 +23,9 @@ direto da API do Omie.
 > **Linha de ação por lote.** Os responsáveis (Adesivos Estruturais e Linha TT;
 > demais famílias) respondem o e-mail de alerta com a estratégia, o prazo e o
 > status de cada lote. A rotina diária lê as respostas e grava o CSV do Drive
-> `LINHAS_ACAO_CSV_URL` (lote, código do produto, linha de ação, prazo, status,
+> planilha "Painel de Lotes - dados da rotina" (abas `linhas_acao` e
+> `revalidacoes`, lida pelo link público em CSV; `LINHAS_ACAO_CSV_URL` fica
+> como reserva) (lote, código do produto, linha de ação, prazo, status,
 > data — sem nomes de pessoas). O painel mostra a coluna "Linha de ação" e
 > destaca lotes sem plano ou com prazo vencido.
 >

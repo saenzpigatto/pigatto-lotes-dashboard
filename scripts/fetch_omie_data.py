@@ -22,6 +22,8 @@ IMPORTANTE — status de cada parte desta integração:
 """
 
 import json
+import csv
+import io
 import os
 import re
 import sys
@@ -81,6 +83,36 @@ LINHAS_ACAO_CSV_URL = os.environ.get(
     "LINHAS_ACAO_CSV_URL",
     "https://drive.google.com/uc?export=download&id=1QJQ5WSwWc-lCj5atkpZw5G5vY_grM7fh",
 )
+# Planilha do Google mantida pela rotina diária (abas "revalidacoes" e
+# "linhas_acao"), lida pelo link público de exportação em CSV. É a fonte
+# principal desde 18/11/2026; os CSVs do Drive acima ficam como reserva.
+PLANILHA_ROTINA_ID = os.environ.get("PLANILHA_ROTINA_ID", "1rHzV8iyE2hAVCjMuCIOhV3ILtK8IbEek2oDe8e_py4U")
+
+
+def url_aba(aba: str) -> str:
+    return f"https://docs.google.com/spreadsheets/d/{PLANILHA_ROTINA_ID}/gviz/tq?tqx=out:csv&sheet={aba}"
+
+
+def baixar_tabela(urls: list) -> list:
+    """Baixa a primeira fonte que responder e devolve as linhas (sem o cabeçalho).
+    Aceita CSV com vírgula (planilha) ou ponto e vírgula (arquivo do Drive)."""
+    erros = []
+    for url in urls:
+        try:
+            resp = requests.get(url, timeout=TIMEOUT)
+            resp.raise_for_status()
+            texto = resp.content.decode("utf-8-sig")
+            primeira = texto.splitlines()[0] if texto.strip() else ""
+            if not primeira.lower().replace('"', "").startswith("lote"):
+                raise ValueError(f"cabeçalho inesperado: {primeira[:80]}")
+            delim = ";" if primeira.count(";") > primeira.count(",") else ","
+            linhas = list(csv.reader(io.StringIO(texto), delimiter=delim))
+            return [[c.strip() for c in l] for l in linhas[1:] if any(c.strip() for c in l)]
+        except Exception as exc:  # noqa: BLE001 - tenta a próxima fonte
+            erros.append(f"{url.split('?')[0][-40:]}: {exc}")
+    raise RuntimeError("; ".join(erros))
+
+
 REVALIDACOES = {
     "26010048": "13/11/2026",  # LORD ADESIVO 406 - KG, certificado de 23/09/2026
     "26010193": "18/11/2026",  # LORD ADESIVO 406 - KG, certificado de 23/09/2026
@@ -480,23 +512,17 @@ def enriquecer_com_op(lotes: list) -> None:
 
 
 def carregar_revalidacoes() -> dict:
-    """Junta a tabela de reserva com o CSV do Drive, ficando com a maior data por lote."""
+    """Junta a tabela de reserva com a planilha (ou o CSV do Drive), ficando com a maior data por lote."""
     revalidacoes = {lote: parse_data_omie(d) for lote, d in REVALIDACOES.items()}
     try:
-        resp = requests.get(REVALIDACOES_CSV_URL, timeout=TIMEOUT)
-        resp.raise_for_status()
-        linhas = resp.content.decode("utf-8-sig").splitlines()
-        if not linhas or not linhas[0].lower().startswith("lote;"):
-            raise ValueError(f"cabeçalho inesperado: {linhas[:1]}")
-        for linha in linhas[1:]:
-            partes = [p.strip() for p in linha.split(";")]
+        for partes in baixar_tabela([url_aba("revalidacoes"), REVALIDACOES_CSV_URL]):
             if len(partes) < 2 or not partes[0]:
                 continue
             data = parse_data_omie(partes[1])
             if data and (revalidacoes.get(partes[0]) is None or data > revalidacoes[partes[0]]):
                 revalidacoes[partes[0]] = data
-    except Exception as exc:  # noqa: BLE001 - sem o CSV, segue com a tabela de reserva
-        print(f"AVISO: não foi possível ler as revalidações do Drive ({exc}); usando a tabela do script.",
+    except Exception as exc:  # noqa: BLE001 - sem a planilha, segue com a tabela de reserva
+        print(f"AVISO: não foi possível ler as revalidações ({exc}); usando a tabela do script.",
               file=sys.stderr)
     return {lote: d for lote, d in revalidacoes.items() if d}
 
@@ -532,13 +558,8 @@ def carregar_linhas_acao() -> dict:
     """
     linhas_acao: dict = {}
     try:
-        resp = requests.get(LINHAS_ACAO_CSV_URL, timeout=TIMEOUT)
-        resp.raise_for_status()
-        linhas = resp.content.decode("utf-8-sig").splitlines()
-        if not linhas or not linhas[0].lower().startswith("lote;"):
-            raise ValueError(f"cabeçalho inesperado: {linhas[:1]}")
-        for linha in linhas[1:]:
-            partes = [p.strip() for p in linha.split(";")] + [""] * 6
+        for partes in baixar_tabela([url_aba("linhas_acao"), LINHAS_ACAO_CSV_URL]):
+            partes = partes + [""] * 6
             if not partes[0] or not partes[2]:
                 continue
             linhas_acao[(partes[0], partes[1])] = {
@@ -547,8 +568,8 @@ def carregar_linhas_acao() -> dict:
                 "status": partes[4][:40],
                 "atualizado_em": partes[5][:10],
             }
-    except Exception as exc:  # noqa: BLE001 - sem o CSV, o painel sai sem a coluna preenchida
-        print(f"AVISO: não foi possível ler as linhas de ação do Drive ({exc}).", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - sem a fonte, o painel sai sem a coluna preenchida
+        print(f"AVISO: não foi possível ler as linhas de ação ({exc}).", file=sys.stderr)
     return linhas_acao
 
 
